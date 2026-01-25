@@ -55,6 +55,56 @@ const ARTISTS = [
       "Ярошенко получил прозвище «совесть передвижников».",
     years: "1846–1898",
     search: "Николай Ярошенко"
+  },
+  {
+    slug: "surikov",
+    name: "Василий Суриков",
+    bio:
+      "Выдающийся русский исторический живописец, мастер масштабных композиций. " +
+      "Его картины наполнены драмой и вниманием к характеру людей и эпохи. " +
+      "Суриков оказал большое влияние на развитие национальной школы живописи.",
+    years: "1848–1916",
+    search: "Василий Суриков"
+  },
+  {
+    slug: "kramskoy",
+    name: "Иван Крамской",
+    bio:
+      "Художник, критик и один из идеологов передвижников. " +
+      "Особенно известен как тонкий портретист и мастер психологической выразительности. " +
+      "Крамской активно формировал художественную повестку своего времени.",
+    years: "1837–1887",
+    search: "Иван Крамской"
+  },
+  {
+    slug: "kuindzhi",
+    name: "Архип Куинджи",
+    bio:
+      "Русский живописец-пейзажист, прославившийся работой со светом и цветом. " +
+      "Его полотна часто строятся на эффекте свечения и почти театральной атмосфере. " +
+      "Куинджи объединял реализм и выразительную декоративность.",
+    years: "1842–1910",
+    search: "Архип Куинджи"
+  },
+  {
+    slug: "levitan",
+    name: "Исаак Левитан",
+    bio:
+      "Классик русского лирического пейзажа, мастер настроения и тонких состояний природы. " +
+      "Его работы передают ощущение тишины, времени года и внутреннего переживания. " +
+      "Левитан считается одним из самых поэтичных художников своей эпохи.",
+    years: "1860–1900",
+    search: "Исаак Левитан"
+  },
+  {
+    slug: "serov",
+    name: "Валентин Серов",
+    bio:
+      "Русский живописец, выдающийся портретист рубежа XIX–XX веков. " +
+      "Его стиль сочетает точность наблюдения и свободную живописную манеру. " +
+      "Серов писал как парадные, так и камерные психологические портреты.",
+    years: "1865–1911",
+    search: "Валентин Серов"
   }
 ];
 
@@ -62,6 +112,7 @@ const ALLOWED_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp"]);
 const THUMB_WIDTH = Number(process.env.FETCH_ARTISTS_THUMB_WIDTH ?? "1400");
 const thumbCache = new Map();
 const extractCache = new Map();
+const ENTITY_CHUNK_SIZE = 40;
 
 function normalizeTitle(value) {
   return value.trim().toLowerCase();
@@ -124,7 +175,11 @@ async function fetchJson(url, options = {}) {
   if (!res.ok) {
     throw new Error(`Request failed ${res.status}: ${url}`);
   }
-  return res.json();
+  const data = await res.json();
+  if (data?.error) {
+    throw new Error(`API error: ${data.error.code ?? "unknown"}`);
+  }
+  return data;
 }
 
 async function resolveArtistQid(artist) {
@@ -141,11 +196,16 @@ async function resolveArtistQid(artist) {
 
 async function fetchWikidataEntities(ids) {
   if (!ids.length) return {};
-  const url =
-    "https://www.wikidata.org/w/api.php?action=wbgetentities&format=json&props=descriptions|sitelinks&languages=ru|en&sitefilter=ruwiki&ids=" +
-    ids.join("|");
-  const data = await fetchJson(url);
-  return data?.entities ?? {};
+  const entities = {};
+  for (let i = 0; i < ids.length; i += ENTITY_CHUNK_SIZE) {
+    const chunk = ids.slice(i, i + ENTITY_CHUNK_SIZE);
+    const url =
+      "https://www.wikidata.org/w/api.php?action=wbgetentities&format=json&props=descriptions|sitelinks&languages=ru|en&sitefilter=ruwiki&ids=" +
+      chunk.join("|");
+    const data = await fetchJson(url);
+    Object.assign(entities, data?.entities ?? {});
+  }
+  return entities;
 }
 
 async function fetchWikipediaExtract(title) {
