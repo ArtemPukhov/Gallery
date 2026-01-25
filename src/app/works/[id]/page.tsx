@@ -1,13 +1,17 @@
 ﻿import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getWorkById, getArtistByWorkId } from "@/utils/data";
+import { getAllWorks, getWorkById, getArtistByWorkId } from "@/utils/data";
 import WorkImage from "@/components/WorkImage";
 import FavoriteButton from "@/components/FavoriteButton";
 
 type PageProps = {
   params: { id: string };
 };
+
+export function generateStaticParams() {
+  return getAllWorks().map((work) => ({ id: work.id }));
+}
 
 export function generateMetadata({ params }: PageProps): Metadata {
   const work = getWorkById(params.id);

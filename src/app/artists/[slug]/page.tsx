@@ -10,6 +10,10 @@ type PageProps = {
   params: { slug: string };
 };
 
+export function generateStaticParams() {
+  return artists.map((artist) => ({ slug: artist.slug }));
+}
+
 export function generateMetadata({ params }: PageProps): Metadata {
   const artist = artists.find((item) => item.slug === params.slug);
   if (!artist) {

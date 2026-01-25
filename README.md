@@ -30,6 +30,7 @@ docker run --rm -p 3000:3000 peredvizhniki-gallery
 
 В репозитории добавлен workflow: `.github/workflows/docker.yml`.
 Он собирает приложение и публикует Docker-образ в GitHub Container Registry.
+При пуше в `main` также выполняется деплой на сервер по SSH.
 
 После пуша в `main`/`master` образ будет доступен как:
 - `ghcr.io/<owner>/<repo>:latest`
@@ -41,6 +42,30 @@ docker run --rm -p 3000:3000 peredvizhniki-gallery
 docker pull ghcr.io/<owner>/<repo>:latest
 docker run --rm -p 3000:3000 ghcr.io/<owner>/<repo>:latest
 ```
+
+### Secrets для автодеплоя
+
+Добавьте в GitHub репозиторий (Settings → Secrets and variables → Actions):
+
+- `SSH_HOST` — адрес сервера
+- `SSH_USER` — пользователь
+- `SSH_KEY` — приватный SSH-ключ
+- `SSH_PORT` — порт SSH (обычно `22`)
+- `CONTAINER_NAME` — имя контейнера, например `peredvizhniki-gallery`
+- `APP_PORT` — внешний порт на сервере, например `3000`
+- `GHCR_USERNAME` — ваш GitHub username/owner
+- `GHCR_TOKEN` — GitHub PAT с правом `read:packages`
+
+## GitHub Pages (static)
+
+Добавлен workflow: `.github/workflows/pages.yml`.
+
+Что нужно в репозитории:
+1. Settings → Pages → Source: `GitHub Actions`
+2. Пуш в `main` запустит сборку и деплой в Pages
+
+Сайт будет доступен по адресу:
+- `https://<owner>.github.io/<repo>/`
 
 ## Автозагрузка данных (build-time)
 
