@@ -1,0 +1,17 @@
+﻿@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background: radial-gradient(1200px 800px at 10% 0%, #1f1f26 0%, #0b0b0c 55%, #0a0a0b 100%);
+  color: #f2efe8;
+}
+
+* {
+  scrollbar-color: #3c3f4d #121316;
+  scrollbar-width: thin;
+}
