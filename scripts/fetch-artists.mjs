@@ -113,6 +113,9 @@ const THUMB_WIDTH = Number(process.env.FETCH_ARTISTS_THUMB_WIDTH ?? "1400");
 const thumbCache = new Map();
 const extractCache = new Map();
 const ENTITY_CHUNK_SIZE = 40;
+const MIN_DELAY_MS = 200;
+const MAX_RETRIES = 5;
+let lastRequestAt = 0;
 
 function normalizeTitle(value) {
   return value.trim().toLowerCase();
@@ -165,21 +168,55 @@ async function resolveImageUrl(rawUrl) {
   return thumbUrl;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function fetchJson(url, options = {}) {
-  const res = await fetch(url, {
-    headers: {
-      "User-Agent": "peredvizhniki-gallery/1.0 (build-time fetch)"
-    },
-    ...options
-  });
-  if (!res.ok) {
-    throw new Error(`Request failed ${res.status}: ${url}`);
+  const now = Date.now();
+  const waitFor = Math.max(0, MIN_DELAY_MS - (now - lastRequestAt));
+  if (waitFor > 0) {
+    await sleep(waitFor);
   }
-  const data = await res.json();
-  if (data?.error) {
-    throw new Error(`API error: ${data.error.code ?? "unknown"}`);
+
+  let attempt = 0;
+  let lastError = null;
+  while (attempt < MAX_RETRIES) {
+    attempt += 1;
+    const startedAt = Date.now();
+    try {
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent": "peredvizhniki-gallery/1.0 (build-time fetch)"
+        },
+        ...options
+      });
+      lastRequestAt = Date.now();
+
+      if (!res.ok) {
+        if ((res.status === 429 || res.status >= 500) && attempt < MAX_RETRIES) {
+          await sleep(400 * attempt);
+          continue;
+        }
+        throw new Error(`Request failed ${res.status}: ${url}`);
+      }
+      const data = await res.json();
+      if (data?.error) {
+        throw new Error(`API error: ${data.error.code ?? "unknown"}`);
+      }
+      return data;
+    } catch (error) {
+      lastRequestAt = Date.now();
+      lastError = error;
+      if (attempt >= MAX_RETRIES) {
+        break;
+      }
+      const spent = Date.now() - startedAt;
+      const backoff = Math.max(300 * attempt, MIN_DELAY_MS - spent);
+      await sleep(backoff);
+    }
   }
-  return data;
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 async function resolveArtistQid(artist) {
@@ -211,15 +248,20 @@ async function fetchWikidataEntities(ids) {
 async function fetchWikipediaExtract(title) {
   if (!title) return null;
   if (extractCache.has(title)) return extractCache.get(title);
-  const url =
-    "https://ru.wikipedia.org/w/api.php?action=query&format=json&prop=extracts&explaintext=1&exsectionformat=plain&exintro=1&exchars=800&titles=" +
-    encodeURIComponent(title);
-  const data = await fetchJson(url);
-  const pages = data?.query?.pages ?? {};
-  const page = Object.values(pages)[0];
-  const extract = page?.extract?.trim() || null;
-  extractCache.set(title, extract);
-  return extract;
+  try {
+    const url =
+      "https://ru.wikipedia.org/w/api.php?action=query&format=json&prop=extracts&explaintext=1&exsectionformat=plain&exintro=1&exchars=800&titles=" +
+      encodeURIComponent(title);
+    const data = await fetchJson(url);
+    const pages = data?.query?.pages ?? {};
+    const page = Object.values(pages)[0];
+    const extract = page?.extract?.trim() || null;
+    extractCache.set(title, extract);
+    return extract;
+  } catch {
+    extractCache.set(title, null);
+    return null;
+  }
 }
 
 async function enrichWithDescriptions(works) {
@@ -260,15 +302,18 @@ async function fetchWorksByArtist(qid) {
   return enrichWithDescriptions(results);
 }
 
-function finalizeWorks(slug, works) {
+function buildNeutralDescription(artistName, work) {
+  const base = `Картина "${work.title}" художника ${artistName}`;
+  return work.year ? `${base} (${work.year}).` : `${base}.`;
+}
+
+function finalizeWorks(artist, works) {
   const withDescriptions = works.map((work) => ({
     id: work.id,
     title: work.title,
     year: work.year,
     imageUrl: work.imageUrl,
-    description:
-      work.description ??
-      "Описание будет добавлено позже. Используйте это поле, чтобы дать исторический контекст и детали композиции.",
+    description: work.description ?? buildNeutralDescription(artist.name, work),
     tags: work.tags
   }));
 
@@ -337,7 +382,7 @@ async function run() {
     for (const artist of ARTISTS) {
       const qid = await resolveArtistQid(artist);
       const worksFromApi = await fetchWorksByArtist(qid);
-      const works = finalizeWorks(artist.slug, worksFromApi);
+      const works = finalizeWorks(artist, worksFromApi);
 
       result.push({
         slug: artist.slug,
