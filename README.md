@@ -12,6 +12,36 @@ npm run build
 npm run start
 ```
 
+## Docker (production)
+
+Сборка образа:
+
+```bash
+docker build -t peredvizhniki-gallery .
+```
+
+Запуск контейнера:
+
+```bash
+docker run --rm -p 3000:3000 peredvizhniki-gallery
+```
+
+## GitHub Actions + GHCR
+
+В репозитории добавлен workflow: `.github/workflows/docker.yml`.
+Он собирает приложение и публикует Docker-образ в GitHub Container Registry.
+
+После пуша в `main`/`master` образ будет доступен как:
+- `ghcr.io/<owner>/<repo>:latest`
+- `ghcr.io/<owner>/<repo>:<sha>`
+
+Пример запуска образа из GHCR:
+
+```bash
+docker pull ghcr.io/<owner>/<repo>:latest
+docker run --rm -p 3000:3000 ghcr.io/<owner>/<repo>:latest
+```
+
 ## Автозагрузка данных (build-time)
 
 Скрипт `scripts/fetch-artists.mjs` получает работы через Wikidata/Wikimedia API
