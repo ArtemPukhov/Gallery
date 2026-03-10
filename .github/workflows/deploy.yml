@@ -50,10 +50,14 @@ jobs:
               "FETCH_ARTISTS_DOWNLOAD_IMAGES=0" \
               > .env
 
-            # Bucket setup
+            # Bucket setup (skip entirely if bucket exists)
             docker run --rm --network host minio/mc alias set local http://127.0.0.1:9000 "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" --api s3v4
-            docker run --rm --network host minio/mc mb -p local/$MINIO_BUCKET || true
-            docker run --rm --network host minio/mc anonymous set download local/$MINIO_BUCKET
+            if docker run --rm --network host minio/mc ls local/$MINIO_BUCKET >/dev/null 2>&1; then
+              echo "Bucket already exists, skipping creation and policy."
+            else
+              docker run --rm --network host minio/mc mb -p local/$MINIO_BUCKET
+              docker run --rm --network host minio/mc anonymous set download local/$MINIO_BUCKET || true
+            fi
 
             # Fetch data and deploy
             docker run --rm --network host --env-file .env -v "$PWD:/app" -w /app node:20-alpine sh -lc "npm ci && npm run fetch:data"
