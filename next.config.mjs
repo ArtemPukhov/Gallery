@@ -7,6 +7,9 @@ const basePath = isPages && repoName ? `/${repoName}` : "";
 const nextConfig = {
   reactStrictMode: true,
   output: isPages ? "export" : "standalone",
+  env: {
+    NEXT_PUBLIC_BASE_PATH: basePath
+  },
   ...(isPages
     ? {
         images: { unoptimized: true },

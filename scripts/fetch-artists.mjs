@@ -1,9 +1,23 @@
 ﻿import fs from "node:fs/promises";
 import path from "node:path";
+import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 
 const OUTPUT_PATH = path.resolve("src/data/artists.ts");
+const IMAGE_OUTPUT_DIR = path.resolve("public/images/works");
 const STRICT = process.env.FETCH_ARTISTS_STRICT === "1";
 const LIMIT = Number(process.env.FETCH_ARTISTS_LIMIT ?? "24");
+const DOWNLOAD_IMAGES = process.env.FETCH_ARTISTS_DOWNLOAD_IMAGES !== "0";
+const SKIP_FETCH = process.env.FETCH_ARTISTS_SKIP === "1";
+const UPLOAD_MINIO = process.env.FETCH_ARTISTS_UPLOAD_MINIO === "1";
+const MINIO_ENDPOINT = process.env.MINIO_ENDPOINT ?? "";
+const MINIO_ACCESS_KEY = process.env.MINIO_ACCESS_KEY ?? "";
+const MINIO_SECRET_KEY = process.env.MINIO_SECRET_KEY ?? "";
+const MINIO_BUCKET = process.env.MINIO_BUCKET ?? "";
+const MINIO_REGION = process.env.MINIO_REGION ?? "us-east-1";
+const MINIO_FORCE_PATH_STYLE = process.env.MINIO_FORCE_PATH_STYLE !== "0";
+const MINIO_PUBLIC_BASE_URL = (process.env.MINIO_PUBLIC_BASE_URL ?? "").replace(/\/+$/, "");
+let minioClient = null;
+let minioReady = false;
 
 const ARTISTS = [
   {
@@ -137,6 +151,39 @@ function getFileExtension(name) {
   return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : "";
 }
 
+function getFileExtensionFromUrl(url) {
+  try {
+    const parsed = new URL(url);
+    return getFileExtension(parsed.pathname.split("/").pop() ?? "");
+  } catch {
+    return getFileExtension(url.split("/").pop() ?? "");
+  }
+}
+
+function sanitizeId(value) {
+  return (value ?? "work")
+    .toString()
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+}
+
+function getContentType(ext) {
+  switch (ext) {
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "png":
+      return "image/png";
+    case "webp":
+      return "image/webp";
+    default:
+      return "application/octet-stream";
+  }
+}
+
 function toFilePathUrl(url) {
   const name = getFileNameFromUrl(url);
   if (!name) return null;
@@ -217,6 +264,137 @@ async function fetchJson(url, options = {}) {
     }
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+function getMinioClient() {
+  if (!UPLOAD_MINIO) return null;
+  if (minioReady) return minioClient;
+  minioReady = true;
+
+  if (!MINIO_ENDPOINT || !MINIO_ACCESS_KEY || !MINIO_SECRET_KEY || !MINIO_BUCKET || !MINIO_PUBLIC_BASE_URL) {
+    throw new Error(
+      "MinIO upload enabled but MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_BUCKET, or MINIO_PUBLIC_BASE_URL is missing."
+    );
+  }
+
+  minioClient = new S3Client({
+    endpoint: MINIO_ENDPOINT,
+    region: MINIO_REGION,
+    credentials: {
+      accessKeyId: MINIO_ACCESS_KEY,
+      secretAccessKey: MINIO_SECRET_KEY
+    },
+    forcePathStyle: MINIO_FORCE_PATH_STYLE
+  });
+  return minioClient;
+}
+
+async function fetchWithRetry(url, options = {}) {
+  const now = Date.now();
+  const waitFor = Math.max(0, MIN_DELAY_MS - (now - lastRequestAt));
+  if (waitFor > 0) {
+    await sleep(waitFor);
+  }
+
+  let attempt = 0;
+  let lastError = null;
+  while (attempt < MAX_RETRIES) {
+    attempt += 1;
+    const startedAt = Date.now();
+    try {
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent": "peredvizhniki-gallery/1.0 (build-time fetch)"
+        },
+        ...options
+      });
+      lastRequestAt = Date.now();
+
+      if (!res.ok) {
+        if ((res.status === 429 || res.status >= 500) && attempt < MAX_RETRIES) {
+          await sleep(500 * attempt);
+          continue;
+        }
+        throw new Error(`Request failed ${res.status}: ${url}`);
+      }
+      return res;
+    } catch (error) {
+      lastRequestAt = Date.now();
+      lastError = error;
+      if (attempt >= MAX_RETRIES) {
+        break;
+      }
+      const spent = Date.now() - startedAt;
+      const backoff = Math.max(500 * attempt, MIN_DELAY_MS - spent);
+      await sleep(backoff);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+async function fileExistsNonEmpty(filePath) {
+  try {
+    const stat = await fs.stat(filePath);
+    return stat.size > 0;
+  } catch {
+    return false;
+  }
+}
+
+async function downloadImage(url, artistSlug, workId) {
+  if (!DOWNLOAD_IMAGES && !UPLOAD_MINIO) return null;
+  if (!url) return null;
+
+  const ext = getFileExtensionFromUrl(url) || "jpg";
+  const safeId = sanitizeId(workId) || "work";
+  const fileName = `${safeId}.${ext}`;
+  const artistDir = path.join(IMAGE_OUTPUT_DIR, artistSlug);
+  const filePath = path.join(artistDir, fileName);
+
+  if (DOWNLOAD_IMAGES) {
+    await fs.mkdir(artistDir, { recursive: true });
+    if (await fileExistsNonEmpty(filePath)) {
+      return `/images/works/${artistSlug}/${fileName}`;
+    }
+  }
+
+  const res = await fetchWithRetry(url);
+  const buffer = Buffer.from(await res.arrayBuffer());
+  if (UPLOAD_MINIO) {
+    const client = getMinioClient();
+    const key = `works/${artistSlug}/${fileName}`;
+    await client.send(
+      new PutObjectCommand({
+        Bucket: MINIO_BUCKET,
+        Key: key,
+        Body: buffer,
+        ContentType: getContentType(ext),
+        CacheControl: "public, max-age=31536000, immutable"
+      })
+    );
+    return `${MINIO_PUBLIC_BASE_URL}/${key}`;
+  }
+
+  if (DOWNLOAD_IMAGES) {
+    await fs.writeFile(filePath, buffer);
+    return `/images/works/${artistSlug}/${fileName}`;
+  }
+  return null;
+}
+
+async function cacheWorkImages(artist, works) {
+  if (!DOWNLOAD_IMAGES && !UPLOAD_MINIO) return works;
+  const cached = [];
+  for (const work of works) {
+    try {
+      const localUrl = await downloadImage(work.imageUrl, artist.slug, work.id ?? work.title);
+      cached.push({ ...work, imageUrl: localUrl ?? work.imageUrl });
+    } catch (error) {
+      console.warn(`Failed to cache image for ${artist.slug}: ${work.title}`, error);
+      cached.push(work);
+    }
+  }
+  return cached;
 }
 
 async function resolveArtistQid(artist) {
@@ -370,6 +548,11 @@ function formatArtistsFile(artists) {
 }
 
 async function run() {
+  if (SKIP_FETCH) {
+    console.log("FETCH_ARTISTS_SKIP=1 -> skipping data fetch.");
+    return;
+  }
+
   let existing = null;
   try {
     existing = await fs.readFile(OUTPUT_PATH, "utf8");
@@ -382,7 +565,8 @@ async function run() {
     for (const artist of ARTISTS) {
       const qid = await resolveArtistQid(artist);
       const worksFromApi = await fetchWorksByArtist(qid);
-      const works = finalizeWorks(artist, worksFromApi);
+      const cachedWorks = await cacheWorkImages(artist, worksFromApi);
+      const works = finalizeWorks(artist, cachedWorks);
 
       result.push({
         slug: artist.slug,
