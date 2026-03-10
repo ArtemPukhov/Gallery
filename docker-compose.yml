@@ -10,19 +10,6 @@ services:
     expose:
       - "3000"
 
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-    volumes:
-      - minio_data:/data
-    restart: unless-stopped
-    ports:
-      - "9002:9000"
-      - "9003:9001"
-
   nginx:
     image: nginx:1.27-alpine
     volumes:
@@ -31,8 +18,4 @@ services:
       - "80:80"
     depends_on:
       - app
-      - minio
     restart: unless-stopped
-
-volumes:
-  minio_data:
