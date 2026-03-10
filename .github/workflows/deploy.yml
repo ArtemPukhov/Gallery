@@ -2,7 +2,7 @@ name: Deploy
 
 on:
   push:
-    branches: [main]
+    branches: [ main ]
 
 concurrency:
   group: deploy-main
@@ -32,19 +32,19 @@ jobs:
 
             # Create .env if missing (from GitHub secrets)
             if [ ! -f ".env" ]; then
-              cat > .env <<'ENV_EOF'
-MINIO_ROOT_USER=${{ secrets.MINIO_ROOT_USER }}
-MINIO_ROOT_PASSWORD=${{ secrets.MINIO_ROOT_PASSWORD }}
-MINIO_ENDPOINT=http://127.0.0.1:9000
-MINIO_ACCESS_KEY=${{ secrets.MINIO_ACCESS_KEY }}
-MINIO_SECRET_KEY=${{ secrets.MINIO_SECRET_KEY }}
-MINIO_BUCKET=${{ secrets.MINIO_BUCKET }}
-MINIO_PUBLIC_BASE_URL=https://assets.peredvijniki-gallery.ru
-MINIO_REGION=us-east-1
-MINIO_FORCE_PATH_STYLE=1
-FETCH_ARTISTS_UPLOAD_MINIO=1
-FETCH_ARTISTS_DOWNLOAD_IMAGES=0
-ENV_EOF
+              printf '%s\n' \
+                "MINIO_ROOT_USER=${{ secrets.MINIO_ROOT_USER }}" \
+                "MINIO_ROOT_PASSWORD=${{ secrets.MINIO_ROOT_PASSWORD }}" \
+                "MINIO_ENDPOINT=http://127.0.0.1:9000" \
+                "MINIO_ACCESS_KEY=${{ secrets.MINIO_ACCESS_KEY }}" \
+                "MINIO_SECRET_KEY=${{ secrets.MINIO_SECRET_KEY }}" \
+                "MINIO_BUCKET=${{ secrets.MINIO_BUCKET }}" \
+                "MINIO_PUBLIC_BASE_URL=https://assets.peredvijniki-gallery.ru" \
+                "MINIO_REGION=us-east-1" \
+                "MINIO_FORCE_PATH_STYLE=1" \
+                "FETCH_ARTISTS_UPLOAD_MINIO=1" \
+                "FETCH_ARTISTS_DOWNLOAD_IMAGES=0" \
+                > .env
             fi
 
             # Ensure MinIO is running
