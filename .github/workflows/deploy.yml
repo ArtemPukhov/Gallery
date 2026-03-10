@@ -19,9 +19,11 @@ jobs:
           username: root
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
+          envs: MINIO_USER,MINIO_PASS,MINIO_BUCKET
           script: |
             set -e
             REPO_DIR="/root/peredvizhniki-gallery"
+
             if [ ! -d "$REPO_DIR/.git" ]; then
               git clone https://github.com/${{ github.repository }}.git "$REPO_DIR"
             fi
@@ -30,19 +32,17 @@ jobs:
             git checkout main
             git reset --hard origin/main
 
-            # Wait for system MinIO to be ready
-            docker run --rm --network host busybox sh -c 'for i in $(seq 1 30); do wget -qO- http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1'
-            MINIO_USER="${{ secrets.MINIO_ROOT_USER }}"
-            MINIO_PASS="${{ secrets.MINIO_ROOT_PASSWORD }}"
+            # Wait for MinIO
+            docker run --rm --network host busybox sh -c 'for i in $(seq 1 60); do wget -qO- http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1'
 
-            # Write .env (overwrite to avoid stale values)
+            # Write .env
             printf '%s\n' \
               "MINIO_ROOT_USER=$MINIO_USER" \
               "MINIO_ROOT_PASSWORD=$MINIO_PASS" \
               "MINIO_ENDPOINT=http://127.0.0.1:9000" \
               "MINIO_ACCESS_KEY=$MINIO_USER" \
               "MINIO_SECRET_KEY=$MINIO_PASS" \
-              "MINIO_BUCKET=${{ secrets.MINIO_BUCKET }}" \
+              "MINIO_BUCKET=$MINIO_BUCKET" \
               "MINIO_PUBLIC_BASE_URL=https://assets.peredvijniki-gallery.ru" \
               "MINIO_REGION=us-east-1" \
               "MINIO_FORCE_PATH_STYLE=1" \
@@ -50,13 +50,19 @@ jobs:
               "FETCH_ARTISTS_DOWNLOAD_IMAGES=0" \
               > .env
 
-            # Ensure bucket exists and is public
-            docker run --rm --network host minio/mc alias set local http://127.0.0.1:9000 "$MINIO_USER" "$MINIO_PASS"
-            docker run --rm --network host minio/mc mb -p local/${{ secrets.MINIO_BUCKET }} || true
-            docker run --rm --network host minio/mc anonymous set download local/${{ secrets.MINIO_BUCKET }}
+            # Bucket setup
+            docker run --rm --network host minio/mc sh -c "
+              mc alias set local http://127.0.0.1:9000 '$MINIO_USER' '$MINIO_PASS' --api s3v4
+              if ! mc ls local/$MINIO_BUCKET > /dev/null 2>&1; then
+                mc mb local/$MINIO_BUCKET
+              fi
+              mc anonymous set download local/$MINIO_BUCKET
+            "
 
-            # Generate data and upload images to MinIO (uses .env on the server)
+            # Fetch data and deploy
             docker run --rm --network host --env-file .env -v "$PWD:/app" -w /app node:20-alpine sh -lc "npm ci && npm run fetch:data"
-
-            # Build and restart
             docker compose up -d --build
+        env:
+          MINIO_USER: ${{ secrets.MINIO_ROOT_USER }}
+          MINIO_PASS: ${{ secrets.MINIO_ROOT_PASSWORD }}
+          MINIO_BUCKET: ${{ secrets.MINIO_BUCKET }}
