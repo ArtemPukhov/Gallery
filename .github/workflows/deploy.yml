@@ -19,7 +19,7 @@ jobs:
           username: root
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
-          envs: MINIO_USER,MINIO_PASS,MINIO_BUCKET
+          envs: MINIO_ACCESS_KEY,MINIO_SECRET_KEY,MINIO_BUCKET
           script: |
             set -e
             REPO_DIR="/root/peredvizhniki-gallery"
@@ -37,11 +37,11 @@ jobs:
 
             # Write .env
             printf '%s\n' \
-              "MINIO_ROOT_USER=$MINIO_USER" \
-              "MINIO_ROOT_PASSWORD=$MINIO_PASS" \
+              "MINIO_ACCESS_KEY=$MINIO_ACCESS_KEY" \
+              "MINIO_SECRET_KEY=$MINIO_SECRET_KEY" \
+              "MINIO_ROOT_USER=$MINIO_ACCESS_KEY" \
+              "MINIO_ROOT_PASSWORD=$MINIO_SECRET_KEY" \
               "MINIO_ENDPOINT=http://127.0.0.1:9000" \
-              "MINIO_ACCESS_KEY=$MINIO_USER" \
-              "MINIO_SECRET_KEY=$MINIO_PASS" \
               "MINIO_BUCKET=$MINIO_BUCKET" \
               "MINIO_PUBLIC_BASE_URL=https://assets.peredvijniki-gallery.ru" \
               "MINIO_REGION=us-east-1" \
@@ -51,7 +51,7 @@ jobs:
               > .env
 
             # Bucket setup
-            docker run --rm --network host minio/mc alias set local http://127.0.0.1:9000 "$MINIO_USER" "$MINIO_PASS" --api s3v4
+            docker run --rm --network host minio/mc alias set local http://127.0.0.1:9000 "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" --api s3v4
             docker run --rm --network host minio/mc mb -p local/$MINIO_BUCKET || true
             docker run --rm --network host minio/mc anonymous set download local/$MINIO_BUCKET
 
@@ -59,6 +59,6 @@ jobs:
             docker run --rm --network host --env-file .env -v "$PWD:/app" -w /app node:20-alpine sh -lc "npm ci && npm run fetch:data"
             docker compose up -d --build
         env:
-          MINIO_USER: ${{ secrets.MINIO_ROOT_USER }}
-          MINIO_PASS: ${{ secrets.MINIO_ROOT_PASSWORD }}
+          MINIO_ACCESS_KEY: ${{ secrets.MINIO_ACCESS_KEY }}
+          MINIO_SECRET_KEY: ${{ secrets.MINIO_SECRET_KEY }}
           MINIO_BUCKET: ${{ secrets.MINIO_BUCKET }}
