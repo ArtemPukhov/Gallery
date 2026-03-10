@@ -2,8 +2,10 @@
 import path from "node:path";
 
 const OUTPUT_PATH = path.resolve("src/data/artists.ts");
+const IMAGE_OUTPUT_DIR = path.resolve("public/images/works");
 const STRICT = process.env.FETCH_ARTISTS_STRICT === "1";
 const LIMIT = Number(process.env.FETCH_ARTISTS_LIMIT ?? "24");
+const DOWNLOAD_IMAGES = process.env.FETCH_ARTISTS_DOWNLOAD_IMAGES !== "0";
 
 const ARTISTS = [
   {
@@ -137,6 +139,26 @@ function getFileExtension(name) {
   return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : "";
 }
 
+function getFileExtensionFromUrl(url) {
+  try {
+    const parsed = new URL(url);
+    const ext = getFileExtension(parsed.pathname.split("/").pop() ?? "");
+    return ext;
+  } catch {
+    return getFileExtension(url.split("/").pop() ?? "");
+  }
+}
+
+function sanitizeId(value) {
+  return (value ?? "work")
+    .toString()
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+}
+
 function toFilePathUrl(url) {
   const name = getFileNameFromUrl(url);
   if (!name) return null;
@@ -217,6 +239,58 @@ async function fetchJson(url, options = {}) {
     }
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+async function fileExistsNonEmpty(filePath) {
+  try {
+    const stat = await fs.stat(filePath);
+    return stat.size > 0;
+  } catch {
+    return false;
+  }
+}
+
+async function downloadImage(url, artistSlug, workId) {
+  if (!DOWNLOAD_IMAGES) return null;
+  if (!url) return null;
+
+  const ext = getFileExtensionFromUrl(url) || "jpg";
+  const safeId = sanitizeId(workId) || "work";
+  const fileName = `${safeId}.${ext}`;
+  const artistDir = path.join(IMAGE_OUTPUT_DIR, artistSlug);
+  const filePath = path.join(artistDir, fileName);
+
+  await fs.mkdir(artistDir, { recursive: true });
+  if (await fileExistsNonEmpty(filePath)) {
+    return `/images/works/${artistSlug}/${fileName}`;
+  }
+
+  const res = await fetch(url, {
+    headers: {
+      "User-Agent": "peredvizhniki-gallery/1.0 (build-time fetch)"
+    }
+  });
+  if (!res.ok) {
+    throw new Error(`Image request failed ${res.status}: ${url}`);
+  }
+  const buffer = Buffer.from(await res.arrayBuffer());
+  await fs.writeFile(filePath, buffer);
+  return `/images/works/${artistSlug}/${fileName}`;
+}
+
+async function cacheWorkImages(artist, works) {
+  if (!DOWNLOAD_IMAGES) return works;
+  const cached = [];
+  for (const work of works) {
+    try {
+      const localUrl = await downloadImage(work.imageUrl, artist.slug, work.id ?? work.title);
+      cached.push({ ...work, imageUrl: localUrl ?? work.imageUrl });
+    } catch (error) {
+      console.warn(`Failed to cache image for ${artist.slug}: ${work.title}`, error);
+      cached.push(work);
+    }
+  }
+  return cached;
 }
 
 async function resolveArtistQid(artist) {
@@ -382,7 +456,8 @@ async function run() {
     for (const artist of ARTISTS) {
       const qid = await resolveArtistQid(artist);
       const worksFromApi = await fetchWorksByArtist(qid);
-      const works = finalizeWorks(artist, worksFromApi);
+      const cachedWorks = await cacheWorkImages(artist, worksFromApi);
+      const works = finalizeWorks(artist, cachedWorks);
 
       result.push({
         slug: artist.slug,

@@ -10,6 +10,8 @@ type WorkImageProps = {
 
 export default function WorkImage({ src, alt, className }: WorkImageProps) {
   const [hasError, setHasError] = useState(false);
+  const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+  const resolvedSrc = src.startsWith("/images/") ? `${basePath}${src}` : src;
 
   if (hasError) {
     return (
@@ -21,7 +23,7 @@ export default function WorkImage({ src, alt, className }: WorkImageProps) {
 
   return (
     <img
-      src={src}
+      src={resolvedSrc}
       alt={alt}
       className={className}
       onError={() => setHasError(true)}
