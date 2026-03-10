@@ -51,13 +51,9 @@ jobs:
               > .env
 
             # Bucket setup
-            docker run --rm --network host minio/mc sh -c "
-              mc alias set local http://127.0.0.1:9000 '$MINIO_USER' '$MINIO_PASS' --api s3v4
-              if ! mc ls local/$MINIO_BUCKET > /dev/null 2>&1; then
-                mc mb local/$MINIO_BUCKET
-              fi
-              mc anonymous set download local/$MINIO_BUCKET
-            "
+            docker run --rm --network host minio/mc alias set local http://127.0.0.1:9000 "$MINIO_USER" "$MINIO_PASS" --api s3v4
+            docker run --rm --network host minio/mc mb -p local/$MINIO_BUCKET || true
+            docker run --rm --network host minio/mc anonymous set download local/$MINIO_BUCKET
 
             # Fetch data and deploy
             docker run --rm --network host --env-file .env -v "$PWD:/app" -w /app node:20-alpine sh -lc "npm ci && npm run fetch:data"
