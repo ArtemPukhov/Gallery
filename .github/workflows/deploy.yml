@@ -35,7 +35,7 @@ jobs:
               printf '%s\n' \
                 "MINIO_ROOT_USER=${{ secrets.MINIO_ROOT_USER }}" \
                 "MINIO_ROOT_PASSWORD=${{ secrets.MINIO_ROOT_PASSWORD }}" \
-                "MINIO_ENDPOINT=http://127.0.0.1:9000" \
+                "MINIO_ENDPOINT=http://127.0.0.1:9002" \
                 "MINIO_ACCESS_KEY=${{ secrets.MINIO_ACCESS_KEY }}" \
                 "MINIO_SECRET_KEY=${{ secrets.MINIO_SECRET_KEY }}" \
                 "MINIO_BUCKET=${{ secrets.MINIO_BUCKET }}" \
@@ -51,7 +51,7 @@ jobs:
             docker compose up -d minio
 
             # Ensure bucket exists and is public
-            docker run --rm --network host minio/mc alias set local http://127.0.0.1:9000 ${{ secrets.MINIO_ROOT_USER }} ${{ secrets.MINIO_ROOT_PASSWORD }}
+            docker run --rm --network host minio/mc alias set local http://127.0.0.1:9002 ${{ secrets.MINIO_ROOT_USER }} ${{ secrets.MINIO_ROOT_PASSWORD }}
             docker run --rm --network host minio/mc mb -p local/${{ secrets.MINIO_BUCKET }} || true
             docker run --rm --network host minio/mc anonymous set download local/${{ secrets.MINIO_BUCKET }}
 

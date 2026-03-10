@@ -20,8 +20,8 @@ services:
       - minio_data:/data
     restart: unless-stopped
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "9002:9000"
+      - "9003:9001"
 
   nginx:
     image: nginx:1.27-alpine
