@@ -250,6 +250,49 @@ async function fileExistsNonEmpty(filePath) {
   }
 }
 
+async function fetchWithRetry(url, options = {}) {
+  const now = Date.now();
+  const waitFor = Math.max(0, MIN_DELAY_MS - (now - lastRequestAt));
+  if (waitFor > 0) {
+    await sleep(waitFor);
+  }
+
+  let attempt = 0;
+  let lastError = null;
+  while (attempt < MAX_RETRIES) {
+    attempt += 1;
+    const startedAt = Date.now();
+    try {
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent": "peredvizhniki-gallery/1.0 (build-time fetch)"
+        },
+        ...options
+      });
+      lastRequestAt = Date.now();
+
+      if (!res.ok) {
+        if ((res.status === 429 || res.status >= 500) && attempt < MAX_RETRIES) {
+          await sleep(500 * attempt);
+          continue;
+        }
+        throw new Error(`Request failed ${res.status}: ${url}`);
+      }
+      return res;
+    } catch (error) {
+      lastRequestAt = Date.now();
+      lastError = error;
+      if (attempt >= MAX_RETRIES) {
+        break;
+      }
+      const spent = Date.now() - startedAt;
+      const backoff = Math.max(500 * attempt, MIN_DELAY_MS - spent);
+      await sleep(backoff);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
 async function downloadImage(url, artistSlug, workId) {
   if (!DOWNLOAD_IMAGES) return null;
   if (!url) return null;
@@ -265,14 +308,7 @@ async function downloadImage(url, artistSlug, workId) {
     return `/images/works/${artistSlug}/${fileName}`;
   }
 
-  const res = await fetch(url, {
-    headers: {
-      "User-Agent": "peredvizhniki-gallery/1.0 (build-time fetch)"
-    }
-  });
-  if (!res.ok) {
-    throw new Error(`Image request failed ${res.status}: ${url}`);
-  }
+  const res = await fetchWithRetry(url);
   const buffer = Buffer.from(await res.arrayBuffer());
   await fs.writeFile(filePath, buffer);
   return `/images/works/${artistSlug}/${fileName}`;
