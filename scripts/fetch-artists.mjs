@@ -127,9 +127,12 @@ const THUMB_WIDTH = Number(process.env.FETCH_ARTISTS_THUMB_WIDTH ?? "1400");
 const thumbCache = new Map();
 const extractCache = new Map();
 const ENTITY_CHUNK_SIZE = 40;
-const MIN_DELAY_MS = 200;
+const MIN_DELAY_MS = Number(process.env.FETCH_ARTISTS_MIN_DELAY_MS ?? "200");
+const MAX_DELAY_MS = Number(process.env.FETCH_ARTISTS_MAX_DELAY_MS ?? "5000");
+const JITTER_MS = Number(process.env.FETCH_ARTISTS_JITTER_MS ?? "200");
 const MAX_RETRIES = 5;
 let lastRequestAt = 0;
+let dynamicDelayMs = MIN_DELAY_MS;
 
 function normalizeTitle(value) {
   return value.trim().toLowerCase();
@@ -219,6 +222,39 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function parseRetryAfter(value) {
+  if (!value) return null;
+  const seconds = Number(value);
+  if (!Number.isNaN(seconds)) {
+    return Math.max(0, seconds * 1000);
+  }
+  const date = Date.parse(value);
+  if (!Number.isNaN(date)) {
+    return Math.max(0, date - Date.now());
+  }
+  return null;
+}
+
+async function rateLimitWait() {
+  const now = Date.now();
+  const waitFor = Math.max(0, dynamicDelayMs - (now - lastRequestAt));
+  if (waitFor > 0) {
+    const jitter = JITTER_MS > 0 ? Math.floor(Math.random() * JITTER_MS) : 0;
+    await sleep(waitFor + jitter);
+  }
+}
+
+function bumpDelay(retryAfterMs) {
+  const target = Math.max(MIN_DELAY_MS, retryAfterMs ?? 0);
+  dynamicDelayMs = Math.min(MAX_DELAY_MS, Math.max(dynamicDelayMs * 2, target));
+}
+
+function relaxDelay() {
+  if (dynamicDelayMs > MIN_DELAY_MS) {
+    dynamicDelayMs = Math.max(MIN_DELAY_MS, Math.floor(dynamicDelayMs * 0.9));
+  }
+}
+
 async function fetchJson(url, options = {}) {
   const now = Date.now();
   const waitFor = Math.max(0, MIN_DELAY_MS - (now - lastRequestAt));
@@ -242,7 +278,9 @@ async function fetchJson(url, options = {}) {
 
       if (!res.ok) {
         if ((res.status === 429 || res.status >= 500) && attempt < MAX_RETRIES) {
-          await sleep(400 * attempt);
+          const retryAfterMs = parseRetryAfter(res.headers.get("retry-after"));
+          bumpDelay(retryAfterMs);
+          await sleep(Math.max(400 * attempt, retryAfterMs ?? 0));
           continue;
         }
         throw new Error(`Request failed ${res.status}: ${url}`);
@@ -251,6 +289,7 @@ async function fetchJson(url, options = {}) {
       if (data?.error) {
         throw new Error(`API error: ${data.error.code ?? "unknown"}`);
       }
+      relaxDelay();
       return data;
     } catch (error) {
       lastRequestAt = Date.now();
@@ -290,11 +329,7 @@ function getMinioClient() {
 }
 
 async function fetchWithRetry(url, options = {}) {
-  const now = Date.now();
-  const waitFor = Math.max(0, MIN_DELAY_MS - (now - lastRequestAt));
-  if (waitFor > 0) {
-    await sleep(waitFor);
-  }
+  await rateLimitWait();
 
   let attempt = 0;
   let lastError = null;
@@ -312,11 +347,14 @@ async function fetchWithRetry(url, options = {}) {
 
       if (!res.ok) {
         if ((res.status === 429 || res.status >= 500) && attempt < MAX_RETRIES) {
-          await sleep(500 * attempt);
+          const retryAfterMs = parseRetryAfter(res.headers.get("retry-after"));
+          bumpDelay(retryAfterMs);
+          await sleep(Math.max(500 * attempt, retryAfterMs ?? 0));
           continue;
         }
         throw new Error(`Request failed ${res.status}: ${url}`);
       }
+      relaxDelay();
       return res;
     } catch (error) {
       lastRequestAt = Date.now();

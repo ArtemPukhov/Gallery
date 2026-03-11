@@ -3,6 +3,9 @@ name: Deploy
 on:
   push:
     branches: [ main ]
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
 
 concurrency:
   group: deploy-main
@@ -10,6 +13,7 @@ concurrency:
 
 jobs:
   deploy:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - name: Deploy via SSH
@@ -19,17 +23,11 @@ jobs:
           username: root
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
-          # Передаем переменные через envs, чтобы спецсимволы в паролях не ломали bash
-          envs: MINIO_USER,MINIO_PASS,MINIO_BUCKET
-        env:
-          MINIO_USER: ${{ secrets.MINIO_ROOT_USER }}
-          MINIO_PASS: ${{ secrets.MINIO_ROOT_PASSWORD }}
-          MINIO_BUCKET: ${{ secrets.MINIO_BUCKET }}
-        with:
+          envs: MINIO_ACCESS_KEY,MINIO_SECRET_KEY,MINIO_BUCKET,FETCH_ARTISTS_SKIP,FETCH_ARTISTS_MIN_DELAY_MS,FETCH_ARTISTS_MAX_DELAY_MS,FETCH_ARTISTS_JITTER_MS
           script: |
             set -e
             REPO_DIR="/root/peredvizhniki-gallery"
-            
+
             if [ ! -d "$REPO_DIR/.git" ]; then
               git clone https://github.com/${{ github.repository }}.git "$REPO_DIR"
             fi
@@ -38,37 +36,91 @@ jobs:
             git checkout main
             git reset --hard origin/main
 
-            # 1. Ждем готовности MinIO
-            docker run --rm --network host busybox sh -c 'until wget -qO- http://127.0.0.1:9000/minio/health/live; do sleep 1; done'
+            # Wait for MinIO
+            docker run --rm --network host busybox sh -c 'for i in $(seq 1 60); do wget -qO- http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1'
 
-            # 2. Пишем .env с использованием кавычек для защиты паролей
-            cat <<EOF > .env
-            MINIO_ROOT_USER="$MINIO_USER"
-            MINIO_ROOT_PASSWORD="$MINIO_PASS"
-            MINIO_ENDPOINT=http://127.0.0.1:9000
-            MINIO_ACCESS_KEY="$MINIO_USER"
-            MINIO_SECRET_KEY="$MINIO_PASS"
-            MINIO_BUCKET="$MINIO_BUCKET"
-            MINIO_PUBLIC_BASE_URL=https://assets.peredvijniki-gallery.ru
-            MINIO_REGION=us-east-1
-            MINIO_FORCE_PATH_STYLE=1
-            FETCH_ARTISTS_UPLOAD_MINIO=1
-            FETCH_ARTISTS_DOWNLOAD_IMAGES=1
-            EOF
+            # Write .env
+            printf '%s\n' \
+              "MINIO_ACCESS_KEY=$MINIO_ACCESS_KEY" \
+              "MINIO_SECRET_KEY=$MINIO_SECRET_KEY" \
+              "MINIO_ROOT_USER=$MINIO_ACCESS_KEY" \
+              "MINIO_ROOT_PASSWORD=$MINIO_SECRET_KEY" \
+              "MINIO_ENDPOINT=http://127.0.0.1:9000" \
+              "MINIO_BUCKET=$MINIO_BUCKET" \
+              "MINIO_PUBLIC_BASE_URL=https://assets.peredvijniki-gallery.ru" \
+              "MINIO_REGION=us-east-1" \
+              "MINIO_FORCE_PATH_STYLE=1" \
+              "FETCH_ARTISTS_UPLOAD_MINIO=1" \
+              "FETCH_ARTISTS_DOWNLOAD_IMAGES=0" \
+              "FETCH_ARTISTS_SKIP=${FETCH_ARTISTS_SKIP:-1}" \
+              "FETCH_ARTISTS_MIN_DELAY_MS=${FETCH_ARTISTS_MIN_DELAY_MS:-1000}" \
+              "FETCH_ARTISTS_MAX_DELAY_MS=${FETCH_ARTISTS_MAX_DELAY_MS:-10000}" \
+              "FETCH_ARTISTS_JITTER_MS=${FETCH_ARTISTS_JITTER_MS:-300}" \
+              > .env
 
-            # 3. Настройка бакета (исправляем Access Denied)
-            # Используем один контейнер mc для всех команд
-            docker run --rm --network host minio/mc sh -c "
-              mc alias set local http://127.0.0.1:9000 '$MINIO_USER' '$MINIO_PASS' --api s3v4
-              if ! mc ls local/$MINIO_BUCKET > /dev/null 2>&1; then
-                mc mb local/$MINIO_BUCKET
-              fi
-              mc anonymous set download local/$MINIO_BUCKET
-            "
+            # Bucket setup is skipped (assumed pre-created)
 
-            # 4. Сборка данных (добавляем переменную для User-Agent, чтобы избежать 429)
-            # ВАЖНО: убедитесь, что в вашем Node.js коде есть задержка между запросами
+            # Fetch data and deploy
             docker run --rm --network host --env-file .env -v "$PWD:/app" -w /app node:20-alpine sh -lc "npm ci && npm run fetch:data"
-
-            # 5. Запуск основного приложения
             docker compose up -d --build
+        env:
+          MINIO_ACCESS_KEY: ${{ secrets.MINIO_ACCESS_KEY }}
+          MINIO_SECRET_KEY: ${{ secrets.MINIO_SECRET_KEY }}
+          MINIO_BUCKET: ${{ secrets.MINIO_BUCKET }}
+          FETCH_ARTISTS_SKIP: "1"
+
+  refresh-data:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refresh data via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 158.255.7.83
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          envs: MINIO_ACCESS_KEY,MINIO_SECRET_KEY,MINIO_BUCKET,FETCH_ARTISTS_SKIP,FETCH_ARTISTS_MIN_DELAY_MS,FETCH_ARTISTS_MAX_DELAY_MS,FETCH_ARTISTS_JITTER_MS
+          script: |
+            set -e
+            REPO_DIR="/root/peredvizhniki-gallery"
+
+            if [ ! -d "$REPO_DIR/.git" ]; then
+              git clone https://github.com/${{ github.repository }}.git "$REPO_DIR"
+            fi
+            cd "$REPO_DIR"
+            git fetch origin
+            git checkout main
+            git reset --hard origin/main
+
+            # Wait for MinIO
+            docker run --rm --network host busybox sh -c 'for i in $(seq 1 60); do wget -qO- http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1'
+
+            # Write .env
+            printf '%s\n' \
+              "MINIO_ACCESS_KEY=$MINIO_ACCESS_KEY" \
+              "MINIO_SECRET_KEY=$MINIO_SECRET_KEY" \
+              "MINIO_ROOT_USER=$MINIO_ACCESS_KEY" \
+              "MINIO_ROOT_PASSWORD=$MINIO_SECRET_KEY" \
+              "MINIO_ENDPOINT=http://127.0.0.1:9000" \
+              "MINIO_BUCKET=$MINIO_BUCKET" \
+              "MINIO_PUBLIC_BASE_URL=https://assets.peredvijniki-gallery.ru" \
+              "MINIO_REGION=us-east-1" \
+              "MINIO_FORCE_PATH_STYLE=1" \
+              "FETCH_ARTISTS_UPLOAD_MINIO=1" \
+              "FETCH_ARTISTS_DOWNLOAD_IMAGES=0" \
+              "FETCH_ARTISTS_SKIP=${FETCH_ARTISTS_SKIP:-0}" \
+              "FETCH_ARTISTS_MIN_DELAY_MS=${FETCH_ARTISTS_MIN_DELAY_MS:-1000}" \
+              "FETCH_ARTISTS_MAX_DELAY_MS=${FETCH_ARTISTS_MAX_DELAY_MS:-10000}" \
+              "FETCH_ARTISTS_JITTER_MS=${FETCH_ARTISTS_JITTER_MS:-300}" \
+              > .env
+
+            # Bucket setup is skipped (assumed pre-created)
+
+            # Fetch data and deploy
+            docker run --rm --network host --env-file .env -v "$PWD:/app" -w /app node:20-alpine sh -lc "npm ci && npm run fetch:data"
+            docker compose up -d --build
+        env:
+          MINIO_ACCESS_KEY: ${{ secrets.MINIO_ACCESS_KEY }}
+          MINIO_SECRET_KEY: ${{ secrets.MINIO_SECRET_KEY }}
+          MINIO_BUCKET: ${{ secrets.MINIO_BUCKET }}
