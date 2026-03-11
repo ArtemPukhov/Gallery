@@ -33,6 +33,7 @@ target/
 *.iws
 *.iml
 *.ipr
+.gigaide
 
 # Eclipse
 .apt_generated
