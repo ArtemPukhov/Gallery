@@ -37,7 +37,7 @@ jobs:
             git reset --hard origin/main
 
             # Wait for MinIO
-            docker run --rm --network host busybox sh -c 'for i in $(seq 1 60); do wget -qO- http://127.0.0.1:9002/minio/health/live >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1'
+            docker run --rm --network host busybox sh -c 'for i in $(seq 1 60); do wget -qO- http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1'
 
             # Write .env
             printf '%s\n' \
@@ -45,7 +45,7 @@ jobs:
               "MINIO_SECRET_KEY=$MINIO_SECRET_KEY" \
               "MINIO_ROOT_USER=$MINIO_ACCESS_KEY" \
               "MINIO_ROOT_PASSWORD=$MINIO_SECRET_KEY" \
-              "MINIO_ENDPOINT=http://127.0.0.1:9002" \
+              "MINIO_ENDPOINT=http://127.0.0.1:9000" \
               "MINIO_BUCKET=$MINIO_BUCKET" \
               "MINIO_PUBLIC_BASE_URL=https://assets.peredvijniki-gallery.ru" \
               "MINIO_REGION=us-east-1" \
@@ -97,7 +97,7 @@ jobs:
             git reset --hard origin/main
 
             # Wait for MinIO
-            docker run --rm --network host busybox sh -c 'for i in $(seq 1 60); do wget -qO- http://127.0.0.1:9002/minio/health/live >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1'
+            docker run --rm --network host busybox sh -c 'for i in $(seq 1 60); do wget -qO- http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1'
 
             # Write .env
             printf '%s\n' \
@@ -105,7 +105,7 @@ jobs:
               "MINIO_SECRET_KEY=$MINIO_SECRET_KEY" \
               "MINIO_ROOT_USER=$MINIO_ACCESS_KEY" \
               "MINIO_ROOT_PASSWORD=$MINIO_SECRET_KEY" \
-              "MINIO_ENDPOINT=http://127.0.0.1:9002" \
+              "MINIO_ENDPOINT=http://127.0.0.1:9000" \
               "MINIO_BUCKET=$MINIO_BUCKET" \
               "MINIO_PUBLIC_BASE_URL=https://assets.peredvijniki-gallery.ru" \
               "MINIO_REGION=us-east-1" \
