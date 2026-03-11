@@ -16,6 +16,7 @@ COPY package.json package-lock.json ./
 COPY next.config.mjs tsconfig.json tailwind.config.ts postcss.config.cjs ./
 COPY scripts ./scripts
 COPY src ./src
+COPY public ./public
 RUN npm run build
 
 FROM node:20-alpine AS runner
