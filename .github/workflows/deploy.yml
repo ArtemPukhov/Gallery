@@ -60,9 +60,12 @@ jobs:
 
             # Bucket setup is skipped (assumed pre-created)
 
+            # Stop previous stack to free port 80
+            docker compose down --remove-orphans || true
+
             # Fetch data and deploy
             docker run --rm --network host --env-file .env -v "$PWD:/app" -w /app node:20-alpine sh -lc "npm ci && npm run fetch:data"
-            docker compose up -d --build
+            docker compose up -d --build --remove-orphans
         env:
           MINIO_ACCESS_KEY: ${{ secrets.MINIO_ACCESS_KEY }}
           MINIO_SECRET_KEY: ${{ secrets.MINIO_SECRET_KEY }}
@@ -117,9 +120,12 @@ jobs:
 
             # Bucket setup is skipped (assumed pre-created)
 
+            # Stop previous stack to free port 80
+            docker compose down --remove-orphans || true
+
             # Fetch data and deploy
             docker run --rm --network host --env-file .env -v "$PWD:/app" -w /app node:20-alpine sh -lc "npm ci && npm run fetch:data"
-            docker compose up -d --build
+            docker compose up -d --build --remove-orphans
         env:
           MINIO_ACCESS_KEY: ${{ secrets.MINIO_ACCESS_KEY }}
           MINIO_SECRET_KEY: ${{ secrets.MINIO_SECRET_KEY }}
